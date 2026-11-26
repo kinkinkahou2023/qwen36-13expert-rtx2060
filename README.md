@@ -8,6 +8,25 @@ Verified 2026-11-26. Reproducible recipe for running
 1. **Legacy Strata qwen35moe path** — 13 experts/layer, 30-40 tok/s decode, but only a 512-token prefix cache (Codex first-token latency stays high).
 2. **PolyStrata `strata-poly` path (NEW, recommended)** — conversation cache up to 8192 MiB, 99.99% cached on repeated 15K token prompts, 30.9x speedup, 678 tok/s prefill, 50 tok/s decode, 4-second load.
 
+
+---
+
+## 一键安装包（小白专用）★
+
+**6GB RTX 2060 竟能跑 35B 大模型，>50 tok/s —— 二手 2060 要涨价了！**
+
+`installer/` 目录提供两个 Windows 一键 bat：
+
+| 包 | 适合谁 |
+|---|---|
+| **`installer/install-2060.bat`** ★ 推荐 | RTX 2060 6GB / 纯小白 / 照抄我们验证过的配置（最少交互） |
+| `installer/install-any-nvidia.bat` | 其他 NVIDIA 卡 / 自定义端口路径模型 / 现场检测 AVX2 |
+
+两个包都会自动：检测 GPU/驱动/Python/7z → 选择我们验证过的 **Heretic Q4_K_M**（不下载官方 23GB） → 下载 PolyStrata 源码 → 7z 组装 CUDA 12.9 → 本地编译 `strata-poly.exe` → 配置 `0.0.0.0:8080` + API key → 开机自启计划任务 → `/v1/models` 验证。
+
+前置：Python 3.12 (`Add Python to PATH`)、7-Zip、24GB 磁盘、16GB+ 内存。
+详细步骤与常见问题见 [`installer/README.md`](installer/README.md)。
+
 ---
 
 ## Part 2 (NEW): PolyStrata — the conversation-cache solution
