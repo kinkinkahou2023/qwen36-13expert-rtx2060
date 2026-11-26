@@ -1,0 +1,27 @@
+{
+ "exe": "D:\\AI-Engines\\Strata-0.1.69\\strata.exe",
+ "args": [
+  "--native",
+  "D:\\AI-Models\\Qwen3.6-35B-A3B-uncensored-heretic-MTP\\Qwen3.6-35B-A3B-uncensored-heretic-Native-MTP-Preserved-Q4_K_M.gguf",
+  "--max-context", "32768",
+  "--prefill", "auto",
+  "--mtp", "2",
+  "--kv", "fp4"
+ ],
+ "cwd": "D:\\StrataDeploy\\control",
+ "tokenizer": "D:\\StrataData\\packs\\qwen36-heretic-q4_k_m\\tokenizer",
+ "model_name": "qwen3.6-35b-a3b-heretic-q4_k_m",
+ "arch": "qwen35moe",
+ "log": "C:\\Users\\G\\AppData\\Local\\Strata\\launch\\qwen36-heretic-13exp-clean.engine.log",
+ "lib_dirs": [],
+ "port": 8080,
+ "cuda": 12,
+ "gpu": 0,
+ "gpus_asked": true,
+ "host": "0.0.0.0",
+ "api_key": "sk-strata-KWo9EJgx_doa5zT6e3pII8lR71uWFKzb",
+ "open_browser": false,
+ "reasoning_budget_tokens": 1024,
+ "codex_thread_titles": true,
+ "env_to_user": true
+}
