@@ -1,11 +1,100 @@
-# Qwen3.6-35B-A3B Heretic Q4_K_M on RTX 2060 6GB — 13-expert sweet spot
+# Qwen3.6-35B-A3B Heretic Q4_K_M on RTX 2060 6GB — 13-expert sweet spot + PolyStrata conversation cache
 
-Verified 2026-11-26. This is a reproducible recipe for running
-`Qwen3.6-35B-A3B-uncensored-heretic-Native-MTP-Preserved-Q4_K_M.gguf` at
-**13 experts/layer in VRAM** and **30-40 tok/s decode** on a 6 GB RTX 2060
-with a CPU lacking AVX2 (Xeon E5-2697 v2).
+Verified 2026-11-26. Reproducible recipe for running
+`Qwen3.6-35B-A3B-uncensored-heretic-Native-MTP-Preserved-Q4_K_M.gguf` on a
+6 GB RTX 2060 with a CPU lacking AVX2 (Xeon E5-2697 v2).
 
-## Hardware
+**Two engine paths are documented:**
+1. **Legacy Strata qwen35moe path** — 13 experts/layer, 30-40 tok/s decode, but only a 512-token prefix cache (Codex first-token latency stays high).
+2. **PolyStrata `strata-poly` path (NEW, recommended)** — conversation cache up to 8192 MiB, 99.99% cached on repeated 15K token prompts, 30.9x speedup, 678 tok/s prefill, 50 tok/s decode, 4-second load.
+
+---
+
+## Part 2 (NEW): PolyStrata — the conversation-cache solution
+
+### Why this matters
+
+The legacy q36 path **ignores every cache-tuning flag**. With Codex sending
+28K token prompts that change a token after the first 512, the first-token
+latency stays 25-60 seconds. PolyStrata's `strata-poly` engine has a real
+conversation cache: parked conversations are kept in RAM and resumed
+without re-reading the prompt.
+
+### Verified numbers (this hardware, 15K token Codex-style prompt)
+
+| | cold | same prompt again |
+|---|---|---|
+| Time to answer | 23.4 s | **0.8 s (30.9x faster)** |
+| `cached_tokens` | 0 | **15,343 / 15,344 (99.99%)** |
+| Prefill | 678.7 tok/s | 42 ms total |
+| Decode | 45.8 tok/s | 50.8 tok/s |
+
+Engine log evidence:
+```
+strata serve: prompt 15344 tokens = 0 reused + 15344 read in 22608 ms (678.7 tok/s), 32 generated in 698 ms (45.8 tok/s), drafts accepted 22 of 26
+strata serve: prompt 15344 tokens = 15343 reused + 1 read in 42 ms, 32 generated in 629 ms (50.8 tok/s), drafts accepted 22 of 26
+strata-poly: conversation cache: parked 2112 tokens in 40.7 ms; parked=1 bytes=245194752 evictions=0
+strata-poly: loaded in 4.1 s; 1404 of 10496 routed experts in VRAM (2.5 GiB), 17 CPU threads
+```
+
+Streaming TTFT: **0.69 s cold / 0.26 s cached** (was 25-60 s with legacy q36).
+
+### Install (Windows, no AVX2 CPU, driver 576 — CUDA 12 engine compiled locally)
+
+PolyStrata's setup needs a CUDA 12 toolkit to compile the engine for sm_75
+(the prebuilt engine is CUDA 13 and needs driver 580+, which does NOT support
+Turing sm_75). The silent CUDA installer fails without admin rights; we
+assembled nvcc from the installer with 7-Zip instead:
+
+1. Download PolyStrata from GitHub (`PolyStrata-main`), and CUDA 12.9.1
+   full installer (`cuda_12.9.1_576.57_windows.exe`).
+2. Extract with 7-Zip into `E:\tools\cuda_fresh`: `cuda_nvcc`, `cuda_cudart`,
+   `libcublas`, `cuda_cccl` components. Assemble `cuda_nvcc\nvcc\include`
+   so that `cuda_runtime.h`, `crt/host_config.h`, `crt/host_defines.h`,
+   `cublas_v2.h`, `cublas.lib`, `cublasLt.lib` all resolve.
+   The `nv/target` include is missing from the 7z extraction — download
+   `nv/target` and `nv/detail/{__preprocessor,__target_macros}` from
+   NVIDIA/cccl (`libcudacxx/include/nv/`) and place them in the include dir.
+3. Copy the runtime DLLs (`cudart64_12.dll`, `cublas64_12.dll`,
+   `cublasLt64_12.dll`, `nvvm64_40_0.dll`) next to `strata-poly.exe`.
+4. Run setup with the existing GGUF (no 23 GB re-download):
+   ```
+   python setup.py --setup --family qwen36 --custom-gguf <HERETIC GGUF PATH> \
+     --context 32768 --vision no --host 0.0.0.0 --api-key <KEY> --port 8081 --yes --no-start
+   ```
+   with `STRATA_NVCC=E:\tools\cuda_fresh\cuda_nvcc\nvcc\bin\nvcc.exe`.
+   Setup compiles the engine (~few minutes) and writes a start bat.
+5. Start on port 8080 with a scheduled task (so the process survives SSH/logout):
+   ```
+   schtasks /create /tn poly_qwen36 /tr "E:\tools\start_poly8080.bat" /sc once /st 23:59 /ru SYSTEM /rl HIGHEST /f
+   schtasks /run /tn poly_qwen36
+   ```
+
+The start bat:
+```bat
+@echo off
+cd /d "E:\tools\PolyStrata-main\terminal"
+"C:\Program Files\Python312\python.exe" "E:\tools\PolyStrata-main\terminal\serve\server.py" --engine strata --config "E:\tools\PolyStrata-main\terminal\strata-qwen36-qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved-q4_k_m.json" --port 8080 --host 0.0.0.0
+```
+
+### Serving / client notes (PolyStrata)
+
+- API base: `http://10.0.0.14:8080/v1`, model id:
+  `qwen3.6-35b-a3b-uncensored-heretic-native-mtp-preserved-q4_k_m`
+- Codex: `wire_api = "responses"`, `model_context_window = 32768`,
+  `model_reasoning_effort = "high"`; catalog slug must match the model id.
+- The Responses API works: `POST /v1/responses` with `input`, `instructions`,
+  `max_output_tokens`. Do not send `temperature` / `top_p` / `top_k`
+  (disables MTP drafts).
+- Note: default reasoning runs with high effort; requests that set only 32
+  max tokens will spend all of them on thinking (`reasoning_tokens: 32`).
+  Give Codex enough output budget for the answer.
+
+---
+
+## Part 1: Legacy Strata qwen35moe path (13-expert sweet spot)
+
+### Hardware
 
 | | |
 |---|---|
@@ -14,7 +103,7 @@ with a CPU lacking AVX2 (Xeon E5-2697 v2).
 | RAM | 64 GiB |
 | Strata | 0.2.22 Control + strata.exe 0.1.69 (qwen35moe path) |
 
-## The winning configuration (profile JSON)
+### The winning configuration (profile JSON)
 
 `qwen36-heretic-13exp-clean.json` only keeps the four arguments that
 actually matter:
@@ -48,7 +137,7 @@ Note: the full working profile also lists `--prompt-cache-spread`,
 only because Control re-adds some of them; removing them changes nothing.
 The four arguments above are the ones that actually matter.
 
-## Why these four arguments matter
+### Why these four arguments matter
 
 The q36 engine decides how many routed experts stay in VRAM from the
 **KV-cache size**. Every expert not in VRAM is computed by the CPU pool.
@@ -71,7 +160,7 @@ It is what pushes the thinking phase past 40 tok/s
 (`drafts accepted 92 of 120` in the log). Requests that set
 `temperature` / `top_p` / `top_k` disable MTP — leave them unset for speed.
 
-## Verified engine log lines
+### Verified engine log lines (legacy)
 
 ```
 strata-q36: context 32768 cells, prompt chunk 512, MTP block loaded,
@@ -90,7 +179,7 @@ Measured (greedy, no sampling, 300-token request):
 [strata] done: 300 tokens in 12 s (33.1 tok/s)
 ```
 
-## The conversation-cache limitation (important)
+### The conversation-cache limitation of the legacy engine
 
 The q36 path **ignores every cache-tuning flag** (`--prompt-cache`,
 `--prompt-cache-every`, `--prompt-cache-tail`, `--prompt-cache-spread`,
@@ -113,10 +202,10 @@ prompt 3245 tokens = 512 reused + 2733 read in 24754 ms (110.4 tok/s) # +512 reu
 An unchanged 27K-token prompt was once observed as
 `26,906 tokens = 26,888 reused + 18 read`. So the cache works when the
 prefix is byte-identical; Codex/OpenCode usually change a token after the
-first 512, which is why the first-token latency stays high. This is an
-engine limitation, not a configuration error.
+first 512, which is why the first-token latency stays high. **Solution: use
+PolyStrata's strata-poly engine (Part 2).**
 
-## What did NOT work (avoid these)
+### What did NOT work (avoid these)
 
 | Change | Result |
 |---|---|
@@ -124,22 +213,11 @@ engine limitation, not a configuration error.
 | `--kv fp32` + 32K | 0 experts, 19.9 tok/s |
 | `--kv int8` + 32K | 11 experts, 21 tok/s |
 | `--batch 2` at 64K | engine refuses: not enough VRAM for 2 slots |
-| `--conversation-cache-*` / `--prompt-cache-*` flags | all ignored by q36 |
-
-## Serving / client notes
-
-- Server: `strata serve --profile qwen36-heretic-13exp.json --host 0.0.0.0 --port 8080`
-- API base: `http://10.0.0.14:8080/v1`, model id `qwen3.6-35b-a3b-heretic-q4_k_m`
-- Codex: `wire_api = "responses"`, `stream_idle_timeout_ms = 600000`,
-  `model_context_window = 32768`, catalog slug must match the model id.
-- Keep the model id in sync: the server refuses a request whose model is not loaded
-  ("The model 'X' is not loaded; currently serving 'Y'").
-- `codex_thread_titles = true` makes Codex send a short side request between turns;
-  harmless for this engine, just do not expect the 512-token prefix cache to cover it.
+| `--conversation-cache-*` / `--prompt-cache-*` flags | all ignored by legacy q36 |
 
 ## License / sharing
 
-Free to use and share. If you improve the expert count or get the q36
-conversation cache working, please publish your engine log lines too —
-the `hybrid experts: N of 256 per layer` and `ignoring ...` lines are the
-only reliable evidence of what the engine actually did.
+Free to use and share. If you improve the numbers, please publish your
+engine log lines too — the `hybrid experts: N of 256 per layer`,
+`ignoring ...`, `reused + read` and `drafts accepted` lines are the only
+reliable evidence of what the engine actually did.
