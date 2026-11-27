@@ -240,3 +240,55 @@ Free to use and share. If you improve the numbers, please publish your
 engine log lines too — the `hybrid experts: N of 256 per layer`,
 `ignoring ...`, `reused + read` and `drafts accepted` lines are the only
 reliable evidence of what the engine actually did.
+
+---
+
+## Part 3 (NEW): Gemma 4 26B-A4B on the same 6 GB RTX 2060
+
+`--family gemma4` runs Gemma 4 26B-A4B on the same engine. Tested on the exact
+same 6 GB RTX 2060 + Xeon E5-2697 v2 (no AVX2), 32K context, default int8 KV,
+MTP draft, `STRATA_POLY_MIRROR=1`, `--vram-reserve-mib 120`:
+
+| File | Size | Experts in VRAM | Decode | Verdict |
+|---|---|---|---|---|
+| **UD-Q2_K_XL** ★ | 9.8 GB | 717/3840 (1.5 GiB) | **37.6-40.3 tok/s** | recommended Gemma |
+| UD-Q4_K_M | 15.8 GB | 228/3840 (0.8 GiB) | 28-31 tok/s | works, slower |
+
+Q2 wins because the 6 GB card holds only ~5.3 GB before experts: a smaller file
+leaves room for 2.5x more experts in VRAM, so fewer take the slow CPU path.
+(A community report on the same RTX 2060, QAT, 555 experts, also lands at 30
+tok/s — this is the hardware ceiling.)
+
+Engine log (Q2):
+```
+strata-poly: the 3123 experts outside VRAM in 6.8 GiB of pinned memory
+strata-poly: loaded in 4.8 s; 717 of 3840 routed experts in VRAM (1.5 GiB), 17 CPU threads
+strata serve: 200 generated in 4957 ms (40.3 tok/s), drafts accepted 108 of 148
+```
+
+Setup (adds the matching 0.46 GB MTP drafter automatically):
+```
+python setup.py --setup --family gemma4 --custom-gguf <GGUF> \
+  --context 32768 --vision no --host 0.0.0.0 --api-key <KEY> --port <PORT> --yes --no-start
+```
+Start bat must set `STRATA_POLY_MIRROR=1` (pinned CPU experts; without it experts
+are read from mapped files, much slower). Run config args add `--vram-reserve-mib 120`.
+
+### Three models, fixed ports, one switcher
+Only one model fits in VRAM at a time, but each has a fixed port so clients
+never need reconfiguring. Desktop `切换模型.bat` (server: `switch_model.bat {qwen|q2|q4}`):
+
+| Model | Port | Decode |
+|---|---|---|
+| Qwen3.6 golden (recommended) | 8080 | 50.8 tok/s |
+| Gemma 4 UD-Q2_K_XL | 8081 | 40 tok/s |
+| Gemma 4 UD-Q4_K_M | 8082 | 30 tok/s |
+
+### What did NOT help on this 6 GB card (measured)
+`--kv q4_0` (50→27 on Qwen), `--kv int8k` (slower), `--cpu-share 0/0.5/1.0`
+(flat or slower), `--vram-pool` (flat), 64K+`--kv q8_0` (19 tok/s), 8K/16K
+context (no gain, breaks agent system prompts), `STRATA_FDEC/FATTN` (only help
+at 118K context on 12 GB+ cards), `--calibrate` (strata-poly has no tunables),
+`--cache-bias`/`--attn-requant` (not supported by gemma4). int8 KV + 32K +
+MTP + pinned experts is the sweet spot.
+
