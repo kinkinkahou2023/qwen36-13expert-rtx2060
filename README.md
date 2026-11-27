@@ -243,6 +243,8 @@ reliable evidence of what the engine actually did.
 
 ---
 
+﻿---
+
 ## Part 3 (NEW): Gemma 4 26B-A4B on the same 6 GB RTX 2060
 
 `--family gemma4` runs Gemma 4 26B-A4B on the same engine. Tested on the exact
@@ -292,3 +294,11 @@ at 118K context on 12 GB+ cards), `--calibrate` (strata-poly has no tunables),
 `--cache-bias`/`--attn-requant` (not supported by gemma4). int8 KV + 32K +
 MTP + pinned experts is the sweet spot.
 
+
+### API key (unified across all three models)
+All three ports use the same key: `sk-gemma-local`. Switching models only
+requires changing the port — no client key changes:
+- `http://10.0.0.14:8080/v1` — Qwen3.6 golden
+- `http://10.0.0.14:8081/v1` — Gemma Q2
+- `http://10.0.0.14:8082/v1` — Gemma Q4
+A wrong key returns HTTP 401, so set `Authorization: Bearer sk-gemma-local`.
