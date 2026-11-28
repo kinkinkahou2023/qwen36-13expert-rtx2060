@@ -245,6 +245,8 @@ reliable evidence of what the engine actually did.
 
 ﻿---
 
+---
+
 ## Part 3 (NEW): Gemma 4 26B-A4B on the same 6 GB RTX 2060
 
 `--family gemma4` runs Gemma 4 26B-A4B on the same engine. Tested on the exact
@@ -302,3 +304,20 @@ requires changing the port — no client key changes:
 - `http://10.0.0.14:8081/v1` — Gemma Q2
 - `http://10.0.0.14:8082/v1` — Gemma Q4
 A wrong key returns HTTP 401, so set `Authorization: Bearer sk-gemma-local`.
+### 4th model: Groot 19B-A3B (port 8083)
+`--family groot` adds Groot 19B-A3B (Q4_K_M, 11.6 GB, embedded MTP). Official
+measured 95-97 tok/s on an 8 GB RTX 5060 Laptop; on our 6 GB 2060 + no-AVX2
+CPU it reaches **45-50 tok/s** with 1097/5248 experts in VRAM (1.9 GiB) and
+a faster prefill (58 tok/s). Setup from an existing GGUF:
+```
+python setup.py --setup --family groot --model Q4_K_M \
+  --gguf-dir <folder-with-GGUF> --context 32768 --vision no \
+  --host 0.0.0.0 --api-key sk-gemma-local --port 8083 --yes --no-start
+```
+Do NOT pass `--custom-gguf` with `--family groot` (setup rejects it); use
+`--gguf-dir` + `--model Q4_K_M`. MTP is embedded in the GGUF — no separate
+draft file needed. Same optimizations apply: `STRATA_POLY_MIRROR=1` and
+`--vram-reserve-mib 120`.
+
+Final line-up: port 8080 Qwen3.6 golden (50 tok/s), 8081 Gemma Q2 (40),
+8082 Gemma Q4 (30), 8083 Groot 19B (48). Desktop `切换模型.bat` options 1-4.
